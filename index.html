@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<title>Bird Sightings</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<link rel="stylesheet" href="http://code.jquery.com/mobile/1.3.0/jquery.mobile-1.3.0.min.css" />
+		<script src="http://code.jquery.com/jquery-1.9.1.min.js"></script>
+		<script src="http://code.jquery.com/mobile/1.3.0/jquery.mobile-1.3.0.min.js"></script>
+		<script src="http://twitter.github.com/hogan.js/builds/2.0.0/hogan-2.0.0.js"></script>
+		
+		<!-- bird list template -->
+		<script type="text/template" id="bird-li-tpl">
+    	{{#list}}
+				<li><a href="#bird?nid={{nid}}" data-ajax="false"><h4>{{title}}</h4></a></li>
+			{{/list}}
+		</script>
+		
+		<!-- bird detail page template -->
+		<script type="text/template" id="bird-detail-tpl">
+				<h2>{{title}}</h2>
+				<p id="bird-image"></p>
+				<a href="#" data-role="button" data-inline="true" onClick="submitSighting({{nid}})">Submit Sighting</a>
+				<div data-role="popup" id="sighting-result-pop" data-overlay-theme="a" class="ui-content">
+    			<p>Alert: Message</p>
+				</div>
+				<p>{{#body}}{{value}}{{/body}}</p>
+		</script>
+		
+		<!-- image template -->
+		<script type="text/template" id="image-tpl">
+				<img style="max-width: 100%;" src="{{url}}"/>
+		</script>
+		
+	</head>
+<body>
+
+	<div data-role="page" id="birds">
+		<div data-role="header">
+			<h1>Birds</h1>
+		</div><!-- /header -->
+		<div data-role="content">
+			<ul id="bird-list" data-role="listview"></ul>
+		</div><!-- /content -->
+	</div><!-- /page -->
+	
+	<div data-role="page" id="bird">
+		<div data-role="header">
+			<a href="#" data-role="button" data-rel="back" data-icon="arrow-l">Back</a>
+			<h1>Bird details</h1>
+		</div><!-- /header -->
+		<div data-role="content">
+			<p>Content goes here...</p>
+		</div><!-- /content -->
+	</div><!-- /page -->
+
+	<script>
+		var bird_server = '192.168.0.164/client';
+		var birdListTpl = Hogan.compile($("#bird-li-tpl").html());
+		var birdDetailTpl = Hogan.compile($("#bird-detail-tpl").html());
+		var imageTpl = Hogan.compile($("#image-tpl").html());
+		var authToken;
+		
+		// get session token
+		$.ajax ({
+		  type: 'GET',
+		  url: 'http://'+bird_server+'/restws/session/token',
+		  async: false,
+		  beforeSend: function (xhr){ 
+		    // base64 encoded user:pass
+		  	xhr.setRequestHeader('Authorization', 'Basic cmVzdHdzX2VkaXRvcjplYXN5cGFzcw=='); 
+		  },
+		  xhrFields: {
+		    withCredentials: true
+		  },
+		  success: function (data){
+		    authToken = data; 
+		  }
+		});
+		
+		// submit sighting
+		function submitSighting(nid) {
+			if (navigator.geolocation) {
+				navigator.geolocation.getCurrentPosition(
+	        function(position) {
+	            var loc_entity = { 	'type':'location',
+				            							'field_latitude':position.coords.latitude,
+				            							'field_longitude':position.coords.longitude,
+				            							'field_bird': {'id':nid}
+				            						};
+	            $.ajax ({
+							  type: 'POST',
+							  url: 'http://'+bird_server+'/node',
+							  contentType: 'application/json',
+							  data: JSON.stringify(loc_entity),
+							  beforeSend: function (xhr){ 
+							  	xhr.setRequestHeader('X-CSRF-Token', authToken); 
+							  },
+							  xhrFields: {
+							    withCredentials: true
+							  },
+							  success: function (data){
+							    showAlert('Added sighting at current location');
+							  },
+							  error: function (xhr, ajaxOptions, thrownError){
+							    showAlert('ERROR: '+thrownError);
+							  }
+						});
+	        },
+	        function() {
+	            console.log('Error getting location');
+	        });
+    		return false;
+			}
+		}
+		
+		// alert notification
+		function showAlert(msg) {
+			if (navigator.notification) {
+				// native notification
+				navigator.notification.alert(msg, null); 
+			} else {
+				// jQM Dialog
+				$( "#sighting-result-pop" ).html('<p>'+msg+'</p>');
+				$( "#sighting-result-pop" ).popup( "open", {'positionTo':'window'} );
+			}
+		}
+		
+		// bird list page 
+		$('#birds').on('pageshow', function(event, ui){
+			$.getJSON('http://'+bird_server+'/node.json?type=bird', function(data) {
+				var html = birdListTpl.render(data);
+				$('#bird-list').html(html);
+				$('#bird-list').listview('refresh');
+			});
+		});
+		
+		// bird detail page before show
+		$('#bird').on('pagebeforeshow', function(event, ui){
+			$("#bird div[data-role='content']").html('<p>Loading...</p>');
+		});
+		
+		// bird detail page show
+		$('#bird').on('pageshow', function(event, ui){			
+			if (nid = $.urlParam('nid')) {
+				$.getJSON('http://'+bird_server+'/node/'+nid+'.json', function(node_data) {
+					var html = birdDetailTpl.render(node_data);
+					$("#bird div[data-role='content']").html(html).trigger('create');
+					if (node_data.field_image) {
+						$.getJSON('http://'+bird_server+'/file/'+node_data.field_image.file.id+'.json', function(file_data) {
+							html = imageTpl.render(file_data);
+							$("#bird #bird-image").html(html);
+						});
+					}
+				});
+			}
+		});
+		
+		// return query param
+		// @see http://stackoverflow.com/questions/11388700/passing-data-between-pages-in-jquery-mobile
+		$.urlParam = function(name){
+		    var results = new RegExp('[\\?&]' + name + '=([^&#]*)').exec(window.location.href);
+		    return (results) ? results[1] : null;
+		}
+	</script>
+	
+</body>
+</html>
